@@ -735,3 +735,18 @@ textarea:focus-visible {
 }
 
 .operation-choices{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0}.operation-choice{font-size:10px;padding:5px 7px;border:1px solid #dbe2d4;border-radius:5px;color:#687260}.operation-choice.best{color:#185c3b;background:#eef6e5;border-color:#88ac79}
+
+/* Local full-browser UI */
+.send{display:grid;gap:8px}
+.turns{display:grid;gap:6px;margin-top:12px}
+.turns:empty{display:none}
+.turn{display:flex;gap:10px;align-items:baseline;font-size:12px;color:#5f6258}
+.turn b{font:10px ui-monospace,monospace;padding:2px 6px;border-radius:4px;border:1px solid var(--line);color:#77796f;min-width:58px;text-align:center}
+.turn.current{color:#252523}
+.turn.done b{color:#185c3b;background:#eef6e5;border-color:#88ac79}
+.turn.blocked b{color:#9b3d18;background:#fbeee7;border-color:#e3a587}
+.turn small{color:#969d8e;font-size:11px;margin-left:auto;white-space:nowrap}
+#blocked-note{font-size:11px;color:#969d8e}
+.address{display:flex;flex:1;min-width:0;gap:8px;padding:0;border:0;background:transparent;border-radius:0}
+.address input{font:12px ui-monospace,monospace;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:white}
+.address button,#new-tab,#refresh{min-height:28px;padding:4px 10px;font-size:11px}

@@ -25,12 +25,13 @@ class Browser:
         self.call("Emulation.setDeviceMetricsOverride", width=1120, height=780, deviceScaleFactor=1, mobile=False)
         # Keep rAF/menus rendering in an owned background tab, without activating the user's Chrome tab.
         self.call("Emulation.setFocusEmulationEnabled", enabled=True)
-        self.call("Page.navigate", url=url)
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline:
-            if self.evaluate("document.readyState") == "complete":
-                break
-            time.sleep(0.02)
+        self.after_input = None
+        self.navigate(url)
+
+    def navigate(self, url):
+        """Open a URL already validated by the caller and wait for the new document to load."""
+        navigate(self.call, url)
+        self.after_input = None
 
     def call(self, method, **params):
         return cdp(method, session_id=self.session, **params)
@@ -103,13 +104,44 @@ class Browser:
         if action["kind"] == "wait":
             time.sleep(0.1)
         result = browser_operation({"operation": "act", "session": self.session, "action": action, "text": text})
-        self.after_input = action if action["kind"] != "wait" else None
+        self.after_input = action if action["kind"] not in {"wait", "navigate"} else None
         return result
 
     def close(self):
         if self.target:
             cdp("Target.closeTarget", targetId=self.target)
             self.target = None
+
+
+NAVIGATE = {
+    "id": "navigate",
+    "kind": "navigate",
+    "label": "Open a different website by entering its URL in the address bar. "
+    "Use when the page is blank or the goal needs a site this page does not link to.",
+}
+
+
+def navigate(call, url, timeout=15):
+    result = call("Page.navigate", url=url)
+    if result.get("errorText"):
+        raise RuntimeError(f"Could not open {url}: {result['errorText']}")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        response = call("Runtime.evaluate", expression="[location.href, document.readyState]", returnByValue=True)
+        href, ready = response.get("result", {}).get("value") or (None, None)
+        if ready == "complete" and href != "about:blank" or url == "about:blank":
+            break
+        time.sleep(0.02)
+    # Apps often render forms after the load event. Wait for 400 ms without DOM changes, capped at 4 s.
+    call("Runtime.evaluate", awaitPromise=True, returnByValue=True, expression="""new Promise(resolve => {
+      if (!document.body) return resolve();
+      let timer;
+      const observer=new MutationObserver(() => { clearTimeout(timer); timer=setTimeout(done,400); });
+      const done=() => { observer.disconnect(); resolve(); };
+      observer.observe(document.body,{subtree:true,childList:true,attributes:true});
+      timer=setTimeout(done,400);
+      setTimeout(done,4000);
+    })""")
 
 
 def fingerprint(state):
@@ -137,6 +169,9 @@ def browser_operation(request):
         kind = action["kind"]
         if kind == "scroll":
             call("Input.dispatchMouseEvent", type="mouseWheel", x=550, y=650, deltaX=0, deltaY=action["delta"])
+        elif kind == "navigate":
+            # The agent validates the generated URL (http/https, not a blocked host) before this point.
+            navigate(call, request["text"])
         elif kind != "wait":
             if type(action["node"]) is not int:
                 raise ValueError("Invalid observed node")
@@ -188,6 +223,7 @@ def browser_operation(request):
     info = evaluate(READ_STATE)
     if info is None:
         raise StalePage("Document is navigating")
+    info["actions"].append(dict(NAVIGATE))
     info["fingerprint"] = fingerprint(info)
     if request.get("screenshot", True):
         info["screenshot"] = call("Page.captureScreenshot", format="jpeg", quality=72)["data"]

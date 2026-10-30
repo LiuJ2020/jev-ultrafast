@@ -318,3 +318,74 @@ def test_navigation_during_prediction_reobserves_without_action(runner):
     assert runner.state["status"] == "ready"
     assert runner.state["decision"] is None
     runner.state["browser"].act.assert_not_called()
+
+
+# Local full-browser UI: navigation, blocked hosts, and multi-turn prompts.
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [("news.ycombinator.com", "https://news.ycombinator.com"), ("http://example.com/a", "http://example.com/a")],
+)
+def test_web_url_normalizes_http_urls(text, expected):
+    assert loop.web_url(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["javascript:alert(1)", "data:text/html,x", "mailto:a@b.c", "file:///etc/passwd", "chrome://x", "a b", ""],
+)
+def test_web_url_rejects_non_web_urls(text):
+    with pytest.raises(ValueError, match="nothing opened"):
+        loop.web_url(text)
+
+
+def test_blocked_hosts_cover_subdomains(monkeypatch):
+    monkeypatch.setenv("JEV_BLOCKED_HOSTS", "chase.com, mail.google.com")
+    with pytest.raises(ValueError, match="JEV_BLOCKED_HOSTS"):
+        loop.web_url("https://secure.chase.com/web/auth")
+    assert loop.web_url("https://notchase.com") == "https://notchase.com"
+    assert loop.blocked_host("https://mail.google.com/u/0") == "mail.google.com"
+
+
+def test_blocked_page_is_never_sent_to_jev(runner, monkeypatch):
+    monkeypatch.setenv("JEV_BLOCKED_HOSTS", "example.test")
+    chooser = Mock()
+    monkeypatch.setattr(loop, "choose", chooser)
+    runner.state["status"] = "ready"
+    with pytest.raises(ValueError, match="nothing was sent"):
+        runner.command("predict")
+    chooser.assert_not_called()
+
+
+def test_navigate_validates_generated_url_before_browser_input(runner, monkeypatch):
+    monkeypatch.setattr(loop, "field_text", Mock(return_value=("javascript:alert(1)", {"model": "t", "latency_ms": 1})))
+    runner.state["page"]["actions"].append({"id": "navigate", "kind": "navigate", "label": "Open"})
+    runner.state["decision"] = {**decision("navigate"), "operation": "NAVIGATE", "target": None}
+    with pytest.raises(ValueError, match="nothing opened"):
+        runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    runner.state["browser"].act.assert_not_called()
+
+
+def test_navigate_opens_normalized_url(runner, monkeypatch):
+    monkeypatch.setattr(loop, "field_text", Mock(return_value=("en.wikipedia.org", {"model": "t", "latency_ms": 1})))
+    runner.state["page"]["actions"].append({"id": "navigate", "kind": "navigate", "label": "Open"})
+    runner.state["decision"] = {**decision("navigate"), "operation": "NAVIGATE", "target": None}
+    runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    assert runner.state["browser"].act.call_args.kwargs["text"] == "https://en.wikipedia.org"
+    assert runner.state["history"][-1]["action"] == "Open URL"
+
+
+def test_new_prompt_starts_a_fresh_turn_with_scoped_history(runner, monkeypatch):
+    runner.state.update(plan=["Find a book"], turns=[{"goal": "Find a book", "status": "ready", "start": 0}])
+    runner.state["decision"] = decision("e3")
+    runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    runner.state["status"] = "done"
+    runner.command("prompt", {"goal": "Now open the second result"})
+    assert runner.state["status"] == "ready" and runner.state["goal"] == "Now open the second result"
+    assert runner.state["turns"][0]["status"] == "replaced" and len(runner.state["turns"]) == 2
+    chooser = Mock(return_value={**decision("e3"), "operation": "CLICK"})
+    monkeypatch.setattr(loop, "choose", chooser)
+    runner.command("predict")
+    assert chooser.call_args.args[2] == []  # The earlier turn's actions are not this turn's history.
+    assert len(runner.state["history"]) == 1

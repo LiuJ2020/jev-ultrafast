@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="demo-token" content="__TOKEN__" />
-    <title>Jev Ultrafast · Browser Use</title>
+    <title>Jev Browser</title>
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
     <link rel="stylesheet" href="/style.css" />
   </head>
@@ -16,33 +16,19 @@
       <div class="local"><span class="dot"></span> Jev Ultrafast</div>
     </header>
     <main>
-      <section class="intro">
-        <div>
-          <p class="eyebrow">A BROWSER THAT CHOOSES</p>
-          <h1>Every page is a set of possibilities.</h1>
-          <p>
-            Jev picks the next action. A small language model handles the words.
-            <a href="/demo.mp4" target="_blank" rel="noopener">Watch the real Google Flights run ↗</a>
-          </p>
-        </div>
-        <div class="model-tag">jev-latest <span>+ text helper</span></div>
-      </section>
       <form id="task-form">
         <div class="task-label">
-          <label for="goal">Give it a task</label
-          ><select id="scenario" name="scenario" aria-label="Demo scenario">
-            <option value="flights">Google Flights · real web</option>
-            <option value="travel">Travel planner · fixture</option>
-            <option value="research">Reading room · fixture</option>
-          </select>
+          <label for="goal">Prompt Jev · each prompt is a new turn on the current page</label
+          ><span id="blocked-note"></span>
         </div>
         <div class="task-row">
-          <textarea id="goal" name="goal" rows="5">
-Find one-way flights from Zurich to London on September 20, 2026, for one adult in economy. Stop when matching flight options are visible. Do not select or book a flight.</textarea
-          ><button type="submit" id="start" class="primary">
-            Start demo <span>↗</span>
-          </button>
+          <textarea id="goal" name="goal" rows="3" placeholder="e.g. Go to Hacker News and open the comments of the top story. (Enter runs, Shift+Enter for a new line)"></textarea
+          ><div class="send">
+            <button type="submit" id="start" class="primary">Run <span>↗</span></button
+            ><button type="button" id="step">Step</button>
+          </div>
         </div>
+        <div id="turns" class="turns"></div>
       </form>
       <div class="toolbar">
         <div class="status">
@@ -64,16 +50,20 @@ Find one-way flights from Zurich to London on September 20, 2026, for one adult 
         <div class="browser-panel">
           <div class="browser-bar">
             <div class="traffic"><b></b><b></b><b></b></div>
-            <span id="url">Local demo browser</span
+            <form id="address" class="address"
+              ><input id="url" name="url" type="text" spellcheck="false" autocomplete="off"
+                placeholder="about:blank · type a URL and press Enter" aria-label="Address"
+              /><button type="submit" id="go">Go</button></form
+            ><button type="button" id="refresh" title="Re-read the page (no model call)">Refresh</button
+            ><button type="button" id="new-tab" title="Close this tab and open a blank one">New blank tab</button
             ><span class="live">LIVE</span>
           </div>
           <div class="viewport" id="viewport">
             <div class="empty" id="empty">
               <p class="empty-symbol">[ ↗ ]</p>
-              <h2>Watch the decision happen.</h2>
+              <h2>Blank browser.</h2>
               <p>
-                Start a task to see a real browser, its available<br />actions,
-                and the model's choice.
+                Type a URL above, or just prompt Jev.<br />It can open sites itself with NAVIGATE.
               </p>
             </div>
             <img
@@ -96,8 +86,7 @@ Find one-way flights from Zurich to London on September 20, 2026, for one adult 
             </div>
             <span id="action-count">0 options</span>
           </div>
-          <div id="plan" class="plan"></div>
-          <div class="metrics">
+                    <div class="metrics">
             <div><span>Decision time</span><strong id="latency">—</strong></div>
             <div>
               <span>Target confidence</span><strong id="confidence">—</strong>
@@ -132,7 +121,7 @@ Find one-way flights from Zurich to London on September 20, 2026, for one adult 
       <details>
         <summary>What the model sees</summary>
         <pre id="model-state">
-Start a demo to inspect its structured state.</pre>
+Open a page to inspect its structured state.</pre>
       </details>
       <footer>
         <span>Browser Use × TypeSafe · Experimental baseline</span

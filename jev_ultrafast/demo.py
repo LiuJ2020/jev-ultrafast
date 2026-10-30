@@ -31,7 +31,13 @@ def load_environment():
 
 def response_state():
     state = AGENT.snapshot() if AGENT else {"page": None, "status": "idle", "history": [], "decision": None}
-    return {**state, "text_model": os.environ.get("TEXT_MODEL", "deepseek-chat"), "max_steps": MAX_STEPS}
+    blocked = [d.strip() for d in os.environ.get("JEV_BLOCKED_HOSTS", "").split(",") if d.strip()]
+    return {
+        **state,
+        "text_model": os.environ.get("TEXT_MODEL", "deepseek-chat"),
+        "max_steps": MAX_STEPS,
+        "blocked_hosts": blocked,
+    }
 
 
 def close_browser():
@@ -43,26 +49,19 @@ def close_browser():
 
 def command(name, body):
     global AGENT
-    if name == "reset":
-        scenario = body.get("scenario", "flights")
-        if scenario not in {"travel", "research", "flights"}:
-            raise ValueError("Unknown demo scenario")
-        goal = body.get("goal", "").strip()
-        if not goal or len(goal) > 2000:
-            raise ValueError("Enter 1–2,000 characters")
+    if name == "new":
+        # A fresh owned tab: blank by default, or a URL you typed.
         close_browser()
         AGENT = Agent(
-            "https://www.google.com/travel/flights?hl=en"
-            if scenario == "flights"
-            else f"{ORIGIN}/fixture.html?scenario={scenario}",
-            goal,
+            body.get("url") or "about:blank",
             screenshots=True,
             record_dir=Path.cwd() / "artifacts" / "frames" if body.get("record") else None,
         )
-        AGENT.state["scenario"] = scenario
     else:
         if AGENT is None:
-            raise ValueError("Start a demo first")
+            if name not in {"prompt", "goto"}:
+                raise ValueError("Open a browser or send a prompt first")
+            AGENT = Agent(screenshots=True)
         AGENT.command(name, body)
     return response_state()
 

@@ -3,12 +3,6 @@ const token = document.querySelector('meta[name="demo-token"]').content;
 let state = null,
   busy = false,
   automatic = false;
-const goals = {
-  flights: 'Find one-way flights from Zurich to London on September 20, 2026, for one adult in economy. Stop when matching flight options are visible. Do not select or book a flight.',
-  travel: 'Find a Design stay in Lisbon with Free cancellation and open Casa Flora.',
-  research:
-    "Open the article about using finite choices to control browser agents.",
-};
 const escape = (value) =>
   String(value ?? "").replace(
     /[&<>"']/g,
@@ -31,10 +25,9 @@ async function call(name, body = {}) {
   return data;
 }
 function controls() {
-  const live = state?.page && !["done", "blocked"].includes(state.status);
-  $("start").disabled = busy;
-  $("scenario").disabled = busy;
-  $("goal").disabled = busy;
+  const live = state?.page && state?.goal && !["done", "blocked"].includes(state.status);
+  for (const id of ["start", "step", "goal", "go", "url", "new-tab"]) $(id).disabled = busy;
+  $("refresh").disabled = busy || !state?.page;
   $("choose").disabled = busy || !live;
   $("execute").disabled = busy || !state?.decision || !live;
   $("auto").disabled = busy || !live;
@@ -69,24 +62,30 @@ async function perform(fn, label) {
 function render() {
   if (!state) return;
   $("helper").textContent = `Text helper · ${state.text_model}`;
-  $("plan").innerHTML = (state.plan || [])
-    .map(
-      (goal, i) =>
-        `<div class="plan-step ${i === state.plan_index ? "current" : ""}"><span>${i < state.plan_index ? "✓" : i + 1}</span>${escape(goal)}</div>`,
-    )
+  const turns = state.turns || [];
+  $("turns").innerHTML = turns
+    .map((turn, i) => {
+      const status = turn.status === "ready" && i === turns.length - 1 ? state.status : turn.status;
+      const actions = turn.actions ?? state.history.length - turn.start;
+      return `<div class="turn ${status} ${i === turns.length - 1 ? "current" : ""}"><b>${escape(status)}</b><span>${escape(turn.goal)}</span><small>${actions} action${actions === 1 ? "" : "s"}</small></div>`;
+    })
     .join("");
+  $("blocked-note").textContent = state.blocked_hosts?.length
+    ? `Never sent to Jev: ${state.blocked_hosts.join(", ")}`
+    : "";
   const page = state.page,
     d =
       state.decision ||
       (state.status === "done" ? state.decisions?.at(-1) : null);
   const labels = {
-    idle: "Ready to explore",
+    idle: "No browser yet · type a URL or a prompt",
     ready: "Page observed · ready for a decision",
     predicted: "Choice ready · inspect or execute",
-    done: "Jev reports complete · inspect the page",
-    blocked: "Stopped · no supported next action",
+    done: "Jev reports complete · verify the page, then prompt again",
+    blocked: "Stopped · no supported next action · prompt again",
   };
-  $("status").textContent = labels[state.status] || state.status;
+  $("status").textContent =
+    state.page && !state.goal ? "Page open · send Jev a prompt" : labels[state.status] || state.status;
   if (!page) {
     controls();
     return;
@@ -94,7 +93,7 @@ function render() {
   $("empty").hidden = true;
   $("screenshot").hidden = false;
   $("screenshot").src = `data:image/jpeg;base64,${page.screenshot}`;
-  $("url").textContent = page.url;
+  if (document.activeElement !== $("url")) $("url").value = page.url;
   $("page-title").textContent = page.title;
   $("action-count").textContent = `${state.elements.length} elements`;
   const chosen = page.actions.find((a) => a.id === d?.choice);
@@ -128,7 +127,7 @@ function render() {
     ? state.history
         .map(
           (h) =>
-            `<div class="trace-row"><span class="number">${String(h.step).padStart(2, "0")}</span><div>${escape(h.action)}${h.text ? ` <b>“${escape(h.text)}”</b><small>${escape(h.text_helper)}</small>` : ""}</div><span class="time">${h.latency_ms} ms · ${percent(h.probability)}</span><span class="effect">${h.page_changed ? "Page changed" : "No change observed"}</span></div>`,
+            `<div class="trace-row"><span class="number">${String(h.step).padStart(2, "0")}</span><div>${escape(h.action)}${h.text ? ` <b>“${escape(h.text)}”</b><small>${escape(h.text_helper)}</small>` : ""}</div><span class="time">${h.probability == null ? "you" : `${h.latency_ms} ms · ${percent(h.probability)}`}</span><span class="effect">${h.page_changed ? "Page changed" : "No change observed"}</span></div>`,
         )
         .join("")
     : '<p class="muted">Each executed action leaves an observed result.</p>';
@@ -145,17 +144,59 @@ function render() {
   );
   controls();
 }
+async function runAutomatically() {
+  automatic = true;
+  controls();
+  for (let i = 0; i < state.max_steps * 2 && automatic; i++) {
+    $("status").textContent = "Running…";
+    if ($("pace").checked) {
+      await call("predict");
+      await new Promise((resolve) => setTimeout(resolve, 450));
+      if (!automatic) break;
+      await call("act", { fingerprint: state.page.fingerprint });
+    } else {
+      await call("tick");
+    }
+    if (["done", "blocked"].includes(state.status)) break;
+  }
+  automatic = false;
+}
+function sendPrompt(then) {
+  const goal = $("goal").value.trim();
+  if (!goal) return $("goal").focus();
+  automatic = false;
+  perform(async () => {
+    await call("prompt", { goal });
+    $("goal").value = "";
+    await then();
+  }, state?.page ? "Starting a new turn…" : "Opening a blank browser…");
+}
 $("task-form").addEventListener("submit", (event) => {
   event.preventDefault();
-  automatic = false;
-  perform(
-    () =>
-      call("reset", { scenario: $("scenario").value, goal: $("goal").value }),
-    "Opening a fresh browser…",
-  );
+  sendPrompt(runAutomatically);
 });
-$("scenario").addEventListener("change", () => {
-  $("goal").value = goals[$("scenario").value];
+$("step").addEventListener("click", () => sendPrompt(() => call("predict")));
+$("goal").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    $("task-form").requestSubmit();
+  }
+});
+$("address").addEventListener("submit", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  const url = $("url").value.trim();
+  if (!url) return;
+  automatic = false;
+  perform(async () => {
+    await call("goto", { url });
+    $("url").blur();
+  }, `Opening ${url}…`);
+});
+$("refresh").addEventListener("click", () => perform(() => call("observe"), "Re-reading the page…"));
+$("new-tab").addEventListener("click", () => {
+  automatic = false;
+  perform(() => call("new"), "Opening a blank tab…");
 });
 $("choose").addEventListener("click", () =>
   perform(() => call("predict"), "Jev is comparing the actions…"),
@@ -166,25 +207,7 @@ $("execute").addEventListener("click", () =>
     "Executing the choice…",
   ),
 );
-$("auto").addEventListener("click", () =>
-  perform(async () => {
-    automatic = true;
-    controls();
-    for (let i = 0; i < state.max_steps * 2 && automatic; i++) {
-      $("status").textContent = "Running…";
-      if ($("pace").checked) {
-        await call("predict");
-        await new Promise(resolve => setTimeout(resolve, 450));
-        if (!automatic) break;
-        await call("act", {fingerprint: state.page.fingerprint});
-      } else {
-        await call("tick");
-      }
-      if (["done", "blocked"].includes(state.status)) break;
-    }
-    automatic = false;
-  }, "Running the browser…"),
-);
+$("auto").addEventListener("click", () => perform(runAutomatically, "Running the browser…"));
 $("stop").addEventListener("click", () => {
   automatic = false;
   $("status").textContent = "Pausing after the current request…";
@@ -229,7 +252,7 @@ $("download").addEventListener("click", () => {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "typesafe-browser-trace.json";
+  a.download = "jev-browser-trace.json";
   a.click();
   URL.revokeObjectURL(url);
 });
